@@ -3108,7 +3108,7 @@ namespace ts.projectSystem {
             const project = projectService.configuredProjects.get(configFile.path)!;
             assert.isDefined(project);
             checkProjectActualFiles(project, [file1.path, libFile.path, module1.path, module2.path, configFile.path]);
-            checkWatchedFiles(host, [libFile.path, module1.path, module2.path, configFile.path]);
+            checkWatchedFiles(host, [libFile.path, configFile.path]);
             checkWatchedDirectories(host, [], /*recursive*/ false);
             const watchedRecursiveDirectories = getTypeRootsFromLocation(root + "/a/b/src");
             watchedRecursiveDirectories.push(`${root}/a/b/src/node_modules`, `${root}/a/b/node_modules`);
@@ -7201,7 +7201,7 @@ namespace ts.projectSystem {
                     const projectFilePaths = map(projectFiles, f => f.path);
                     checkProjectActualFiles(project, projectFilePaths);
 
-                    const filesWatched = filter(projectFilePaths, p => p !== app.path);
+                    const filesWatched = filter(projectFilePaths, p => p !== app.path && p.indexOf("/a/b/node_modules") === -1);
                     checkWatchedFiles(host, filesWatched);
                     checkWatchedDirectories(host, typeRootDirectories.concat(recursiveWatchedDirectories), /*recursive*/ true);
                     checkWatchedDirectories(host, [], /*recursive*/ false);
@@ -8424,10 +8424,21 @@ new C();`
         }
 
         function verifyWatchesWithConfigFile(host: TestServerHost, files: File[], openFile: File, extraExpectedDirectories?: ReadonlyArray<string>) {
-            checkWatchedFiles(host, mapDefined(files, f => f === openFile ? undefined : f.path));
+            const expectedRecursiveDirectories = arrayToSet([projectLocation, `${projectLocation}/${nodeModulesAtTypes}`, ...(extraExpectedDirectories || emptyArray)]);
+            checkWatchedFiles(host, mapDefined(files, f => {
+                if (f === openFile) {
+                    return undefined;
+                }
+                const indexOfNodeModules = f.path.indexOf("/node_modules/");
+                if (indexOfNodeModules === -1) {
+                    return f.path;
+                }
+                expectedRecursiveDirectories.set(f.path.substr(0, indexOfNodeModules + "/node_modules".length), true);
+                return undefined;
+            }));
             checkWatchedDirectories(host, [], /*recursive*/ false);
-            checkWatchedDirectories(host, [projectLocation, `${projectLocation}/${nodeModulesAtTypes}`, ...(extraExpectedDirectories || emptyArray)], /*recursive*/ true);
-        }
+            checkWatchedDirectories(host, arrayFrom(expectedRecursiveDirectories.keys()), /*recursive*/ true);
+       }
 
         describe("from files in same folder", () => {
             function getFiles(fileContent: string) {
@@ -8628,7 +8639,7 @@ new C();`
                 verifyTrace(resolutionTrace, expectedTrace);
 
                 const currentDirectory = getDirectoryPath(file1.path);
-                const watchedFiles = mapDefined(files, f => f === file1 ? undefined : f.path);
+                const watchedFiles = mapDefined(files, f => f === file1 || f.path.indexOf("/node_modules/") !== -1 ? undefined : f.path);
                 forEachAncestorDirectory(currentDirectory, d => {
                     watchedFiles.push(combinePaths(d, "tsconfig.json"), combinePaths(d, "jsconfig.json"));
                 });
@@ -9535,7 +9546,7 @@ export function Test2() {
         });
     });
 
-    describe("duplicate packages", () => {
+    describe("tsserverProjectSystem duplicate packages", () => {
         // Tests that 'moduleSpecifiers.ts' will import from the redirecting file, and not from the file it redirects to, if that can provide a global module specifier.
         it("works with import fixes", () => {
             const packageContent = "export const foo: number;";
